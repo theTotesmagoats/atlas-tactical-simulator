@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATLAS TERMINAL: TACTICAL SIMULATOR</title>
+    <style>
+        :root {
+            --bezel: #2c2c2c;
+            --screen-bg: #0a0c0a;
+            --text-green: #00ff41;
+            --warning-red: #ff3300;
+            --metal-shine: linear-gradient(145deg, #444, #222);
+        }
+
+        body {
+            background-color: #050505;
+            color: var(--text-green);
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #cockpit {
+            width: 950px;
+            height: 650px;
+            background: var(--bezel);
+            border: 12px solid #111;
+            border-radius: 25px;
+            display: grid;
+            grid-template-columns: 220px 1fr 220px;
+            grid-template-rows: 1fr 180px;
+            gap: 15px;
+            padding: 25px;
+            box-shadow: inset 0 0 80px #000, 0 30px 60px rgba(0,0,0,0.9);
+            position: relative;
+        }
+
+        .atlas-brand {
+            position: absolute;
+            top: 5px;
+            left: 20px;
+            font-size: 10px;
+            color: #555;
+            letter-spacing: 2px;
+        }
+
+        /* --- GAUGES --- */
+        .gauge-cluster {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            align-items: center;
+            background: rgba(0,0,0,0.4);
+            border-radius: 15px;
+            padding: 10px;
+            border: 2px solid #333;
+        }
+
+        .gauge-canvas {
+            background: #0a0a0a;
+            border-radius: 50%;
+            border: 4px solid #444;
+            box-shadow: inset 0 0 15px #000;
+            width: 120px;
+            height: 120px;
+            cursor: help;
+        }
+
+        /* --- MAIN MONITOR & CRT --- */
+        #monitor {
+            grid-column: 2;
+            background: var(--screen-bg);
+            border: 6px solid #333;
+            border-radius: 10px;
+            padding: 0;
+            box-shadow: inset 0 0 40px #000;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #impactScreen {
+            width: 100%;
+            height: 65%;
+            background: #000;
+            border-bottom: 3px solid #222;
+        }
+
+        #teletype {
+            flex-grow: 1;
+            padding: 15px;
+            font-size: 13px;
+            line-height: 1.5;
+            overflow: hidden;
+            text-shadow: 0 0 5px var(--text-green);
+        }
+
+        #scanline {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%), 
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            background-size: 100% 3px, 3px 100%;
+            pointer-events: none;
+            opacity: 0.6;
+        }
+
+        /* --- CONTROLS --- */
+        #controls {
+            grid-row: 2;
+            grid-column: 1 / span 3;
+            background: var(--metal-shine);
+            border-radius: 15px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            border: 4px solid #111;
+            box-shadow: inset 0 5px 15px rgba(255,255,255,0.1);
+        }
+
+        .toggle-btn {
+            width: 70px;
+            height: 90px;
+            background: #2a2a2a;
+            border: 4px solid #444;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border-radius: 5px;
+            transition: 0.1s;
+        }
+
+        .toggle-btn.active {
+            border-color: var(--text-green);
+            box-shadow: 0 0 20px rgba(0,255,65,0.4);
+        }
+
+        .led {
+            width: 12px;
+            height: 12px;
+            background: #300;
+            border-radius: 50%;
+            margin-top: 10px;
+            border: 1px solid #000;
+        }
+
+        input[type=range] {
+            appearance: slider-vertical;
+            width: 25px;
+            height: 110px;
+            cursor: pointer;
+        }
+
+        .action-button {
+            width: 130px;
+            height: 130px;
+            background: #400;
+            border: 10px solid #200;
+            border-radius: 50%;
+            color: #700;
+            font-family: 'Impact', sans-serif;
+            font-size: 18px;
+            cursor: not-allowed;
+            transition: all 0.2s;
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        .action-button.ready {
+            background: #c00;
+            border-color: #600;
+            color: #fff;
+            opacity: 1;
+            cursor: pointer;
+            box-shadow: 0 0 40px #f00, inset 0 0 20px rgba(255,255,255,0.3);
+        }
+
+        .action-button.reset {
+            background: #0044ff;
+            border-color: #002288;
+            color: #fff;
+            cursor: pointer;
+            box-shadow: 0 0 40px #0044ff;
+            font-size: 16px;
+        }
+
+        .label { font-size: 11px; color: #888; font-weight: bold; margin-top: 8px; text-transform: uppercase; }
+        .hint-text {
+            position: absolute;
+            bottom: 5px;
+            right: 20px;
+            font-size: 10px;
+            color: #666;
+            max-width: 300px;
+        }
+
+        @keyframes shake {
+            0% { transform: translate(2px, 2px) rotate(0deg); }
+            10% { transform: translate(-2px, -3px) rotate(-1deg); }
+            30% { transform: translate(4px, 3px) rotate(1deg); }
+            50% { transform: translate(-4px, 2px) rotate(-1deg); }
+            70% { transform: translate(3px, 1px) rotate(1deg); }
+            90% { transform: translate(-2px, -2px) rotate(0deg); }
+            100% { transform: translate(1px, 2px) rotate(0deg); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="cockpit">
+    <div class="atlas-brand">ATLAS PROTOCOL SYSTEM v2.1</div>
+    
+    <div class="gauge-cluster">
+        <div class="gauge-box">
+            <canvas id="pressureGauge" class="gauge-canvas" title="Pressure (PSI): Measures physical force exerted by gas. Must match target voltage window."></canvas>
+            <div class="label" id="lbl-psi">Reactor PSI</div>
+        </div>
+        <div class="gauge-box">
+            <canvas id="tempGauge" class="gauge-canvas" title="Thermal Core: Regulated by FUEL injection toggle."></canvas>
+            <div class="label">Thermal Core</div>
+        </div>
+    </div>
+
+    <div id="monitor">
+        <canvas id="impactScreen"></canvas>
+        <div id="teletype" aria-live="polite">>> SYSTEM OFFLINE.<br>>> CLICK CONSOLE TO ENGAGE ATLAS PROTOCOL.</div>
+        <div class="hint-text" id="mission-hint">TIP: Press the FUEL and LOX switches, then adjust Voltage to 75-85</div>
+        <div id="scanline"></div>
+    </div>
+
+    <div class="gauge-cluster">
+        <div class="gauge-box">
+            <canvas id="altGauge" class="gauge-canvas" title="Altitude: Atmospheric density coefficient."></canvas>
+            <div class="label">Target Alt</div>
+        </div>
+        <div class="gauge-box">
+            <canvas id="freqGauge" class="gauge-canvas" title="Frequency: Comm link stabilized via LOX input."></canvas>
+            <div class="label">Comm Link</div>
+        </div>
+    </div>
+
+    <div id="controls">
+        <div class="slider-wrap" style="display:flex; flex-direction:column; align-items:center;">
+            <input type="range" id="powerSlider" min="0" max="100" value="0" aria-label="Voltage Controller">
+            <div class="label">Voltage</div>
+        </div>
+
+        <button id="toggle1" class="toggle-btn" onclick="toggleSwitch(1)" aria-label="Toggle Fuel">
+            <div class="label">FUEL</div>
+            <div id="led1" class="led"></div>
+        </button>
+
+        <button id="toggle2" class="toggle-btn" onclick="toggleSwitch(2)" aria-label="Toggle Liquid Oxygen">
+            <div class="label">LOX</div>
+            <div id="led2" class="led"></div>
+        </button>
+
+        <button id="master-arm" class="action-button" onclick="handleActionBtn()" aria-label="Master Arm or Reset">MASTER<br>ARM</button>
+
+        <div style="text-align:center; color:#555; width:120px;">
+            <div style="font-size:10px">SYSTEM STATUS</div>
+            <div id="status-readout" style="font-size:12px; font-weight:bold;">LOCKED</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- DPI SCALING UTILITY ---
+    function setupCanvas(id) {
+        const canvas = document.getElementById(id);
+        const ctx = canvas.getContext('2d');
+        
+        // Set fallback dimensions first
+        canvas.width = 120;
+        canvas.height = 120;
+        
+        const dpr = window.devicePixelRatio || 1;
+        
+        // Use setTimeout to ensure elements are rendered
+        setTimeout(() => {
+            const rect = canvas.getBoundingClientRect();
+            const w = (rect.width || 120);
+            const h = (rect.height || 120);
+            
+            if (w > 0 && h > 0) {
+                canvas.width = w * dpr;
+                canvas.height = h * dpr;
+                ctx.scale(dpr, dpr);
+            }
+        }, 100);
+        
+        return { canvas, ctx, w: 120, h: 120 };
+    }
+
+    const gauges = {
+        pressure: setupCanvas('pressureGauge'),
+        temp: setupCanvas('tempGauge'),
+        alt: setupCanvas('altGauge'),
+        freq: setupCanvas('freqGauge')
+    };
+    
+    // Setup impact screen separately
+    function setupImpactScreen() {
+        const canvas = document.getElementById('impactScreen');
+        const ctx = canvas.getContext('2d');
+        
+        // Set fallback dimensions based on CSS
+        setTimeout(() => {
+            const rect = canvas.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                ctx.scale(dpr, dpr);
+                
+                // Update global reference
+                impactDisplay.w = rect.width;
+                impactDisplay.h = rect.height;
+            }
+        }, 100);
+        
+        return { canvas, ctx, w: 450, h: 280 };
+    }
+    
+    const impactDisplay = setupImpactScreen();
+    const ictx = impactDisplay.ctx;
+
+    // --- AUDIO CONTEXT MANAGEMENT & ENGINE LOOP ---
+    let audioCtx = null;
+    let engineOsc = null;
+    let engineGain = null;
+    let lastAudioUpdate = 0;
+    const AUDIO_UPDATE_INTERVAL = 100; // ms between updates
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Initialize continuous engine hum
+            engineOsc = audioCtx.createOscillator();
+            engineGain = audioCtx.createGain();
+            engineOsc.type = 'sawtooth';
+            engineOsc.frequency.setValueAtTime(50, audioCtx.currentTime); 
+            engineGain.gain.setValueAtTime(0, audioCtx.currentTime); 
+            
+            engineOsc.connect(engineGain);
+            engineGain.connect(audioCtx.destination);
+            engineOsc.start();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+
+    function playBeep(freq, duration, type = 'sine', vol = 0.1) {
+        if (!audioCtx || !document.body.contains(document.getElementById('cockpit'))) return;
+        
+        try {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        } catch (e) {
+            // Silently ignore audio errors
+        }
+    }
+
+    function playMorse() {
+        if (!audioCtx || !document.body.contains(document.getElementById('cockpit'))) return;
+        
+        [0, 200, 400, 700, 1000].forEach((delay, i) => {
+            setTimeout(() => playBeep(700, i % 2 === 0 ? 0.05 : 0.15, 'sine', 0.05), delay);
+        });
+    }
+
+    // --- DYNAMIC SLIDER -> ENGINE AUDIO MAPPING WITH DEBOUNCING ---
+    document.getElementById('powerSlider').addEventListener('input', (e) => {
+        const now = Date.now();
+        if (now - lastAudioUpdate < AUDIO_UPDATE_INTERVAL) return;
+        
+        initAudio();
+        const val = parseFloat(e.target.value);
+        
+        if (!engineGain || !engineOsc || gameState === "LAUNCHED") return;
+        
+        // Map voltage 0-100 to volume 0.0-0.3
+        engineGain.gain.setTargetAtTime(val * 0.003, audioCtx.currentTime, 0.1);
+        // Map voltage 0-100 to pitch 50Hz-150Hz
+        engineOsc.frequency.setTargetAtTime(50 + (val * 1.0), audioCtx.currentTime, 0.1);
+        
+        lastAudioUpdate = now;
+    });
+
+    // --- CRT PARTICLES & CLEANUP ---
+    let particles = [];
+    
+    class Particle {
+        constructor(x, y) {
+            this.x = x; 
+            this.y = y;
+            this.vx = (Math.random() - 0.5) * 12;
+            this.vy = (Math.random() - 0.5) * 12;
+            this.alpha = 1;
+            this.color = ["#ff3300", "#ffcc00", "#ffffff"][Math.floor(Math.random()*3)];
+        }
+        
+        update() { 
+            this.x += this.vx; 
+            this.y += this.vy; 
+            this.alpha -= 0.015; 
+        }
+        
+        draw() {
+            ictx.globalAlpha = this.alpha;
+            ictx.fillStyle = this.color;
+            ictx.beginPath();
+            ictx.arc(this.x, this.y, 3, 0, Math.PI*2);
+            ictx.fill();
+            ictx.globalAlpha = 1.0; 
+        }
+    }
+
+    let animFrame = null;
+    
+    function triggerExplosion() {
+        particles = [];
+        const centerX = impactDisplay.w / 2;
+        const centerY = impactDisplay.h / 2;
+        
+        for(let i=0; i<150; i++) particles.push(new Particle(centerX, centerY));
+        
+        function anim() {
+            ictx.fillStyle = "rgba(0,0,0,0.15)";
+            ictx.fillRect(0, 0, impactDisplay.w, impactDisplay.h);
+            
+            // Reverse iteration for array mutation safety
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.update(); 
+                p.draw();
+                if(p.alpha <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            if(particles.length > 0) {
+                animFrame = requestAnimationFrame(anim);
+            } else if (animFrame) {
+                cancelAnimationFrame(animFrame);
+                animFrame = null;
+            }
+        }
+        
+        if (animFrame) cancelAnimationFrame(animFrame);
+        anim();
+    }
+
+    function drawStatic() {
+        if (particles.length > 0) return;
+        
+        try {
+            const imgData = ictx.createImageData(impactDisplay.w, impactDisplay.h);
+            for (let i = 0; i < imgData.data.length; i += 4) {
+                const c = Math.random() * 25;
+                imgData.data[i] = imgData.data[i+1] = imgData.data[i+2] = c;
+                imgData.data[i+3] = 255;
+            }
+            ictx.putImageData(imgData, 0, 0);
+        } catch (e) {
+            // Ignore errors when canvas is not ready
+        }
+        
+        requestAnimationFrame(drawStatic);
+    }
+
+    // --- GAUGE RENDERER ---
+    function drawGauge(ctxObj, value, color = "#00ff41") {
+        try {
+            const ctx = ctxObj.ctx;
+            const w = ctxObj.w;
+            const h = ctxObj.h;
+            const cx = w / 2;
+            const cy = h / 2;
+            const r = (w / 2) * 0.75; 
+
+            ctx.clearRect(0,0,w,h);
+            
+            // Draw gauge background
+            ctx.strokeStyle = "#222";
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0.75 * Math.PI, 2.25 * Math.PI);
+            ctx.stroke();
+
+            // Calculate needle angle
+            const angle = 0.75 * Math.PI + (value / 100) * 1.5 * Math.PI;
+            
+            // Draw needle
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = color;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + Math.cos(angle) * (r * 0.9), cy + Math.sin(angle) * (r * 0.9));
+            ctx.stroke();
+            
+            // Reset shadow
+            ctx.shadowBlur = 0;
+        } catch (e) {
+            // Ignore errors when canvas is not ready
+        }
+    }
+
+    // --- MISSIONS & GAME LOGIC ---
+    const missions = [
+        { text: "MISSION 1: PRIMARY DEPOT. REQ: 75-85 VOLTS. PRIME ALL FUEL/LOX SYSTEMS.", reqVMin: 75, reqVMax: 85, reqT1: true, reqT2: true },
+        { text: "MISSION 2: STEALTH INSERTION. REQ: 30-40 VOLTS. LOX ONLY. ABORT FUEL.", reqVMin: 30, reqVMax: 40, reqT1: false, reqT2: true },
+        { text: "MISSION 3: MAXIMUM OVERRIDE. REQ: 90-100 VOLTS. FUEL ONLY. DANGER CLOSE.", reqVMin: 90, reqVMax: 100, reqT1: true, reqT2: false }
+    ];
+    
+    let currentMissionIdx = 0;
+    let switches = [false, false];
+    let gameState = "STANDBY"; 
+    let teletypeInterval = null; 
+
+    function printLog(text) {
+        const el = document.getElementById('teletype');
+        if (!el) return;
+        
+        el.innerHTML = "";
+        if (teletypeInterval) clearInterval(teletypeInterval);
+        
+        let i = 0;
+        playMorse();
+        teletypeInterval = setInterval(() => {
+            el.innerHTML += text[i];
+            playBeep(400, 0.01, 'sawtooth', 0.02);
+            i++;
+            if(i >= text.length) clearInterval(teletypeInterval);
+        }, 40);
+    }
+
+    function updateMissionHint() {
+        const hintEl = document.getElementById('mission-hint');
+        if (!hintEl || gameState !== "ACTIVE") return;
+        
+        const m = missions[currentMissionIdx];
+        let hintText = "";
+        
+        if (m.reqT1 && m.reqT2) {
+            hintText = `TIP: Press FUEL & LOX switches, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
+        } else if (m.reqT1) {
+            hintText = `TIP: Press ONLY the FUEL switch, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
+        } else if (m.reqT2) {
+            hintText = `TIP: Press ONLY the LOX switch, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
+        } else {
+            hintText = `TIP: Leave both switches OFF, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
+        }
+        
+        hintEl.textContent = hintText;
+    }
+
+    function loop() {
+        const v = parseInt(document.getElementById('powerSlider').value);
+        if (isNaN(v)) return; // Skip if slider not ready
+        
+        const m = missions[currentMissionIdx];
+
+        let psiColor = "#0f0";
+        if (gameState === "ACTIVE") {
+            // FIXED: Use inclusive bounds for proper validation
+            const inRange = v >= m.reqVMin && v <= m.reqVMax;
+            if (!inRange) psiColor = "#f00";
+        }
+        
+        drawGauge(gauges.pressure, v, psiColor);
+        drawGauge(gauges.temp, switches[0] ? 70 : 15);
+        drawGauge(gauges.alt, 55 + (currentMissionIdx * 10)); 
+        drawGauge(gauges.freq, switches[1] ? 85 : 10);
+
+        const btn = document.getElementById('master-arm');
+        const readout = document.getElementById('status-readout');
+
+        if (gameState === "ACTIVE") {
+            // FIXED: Use inclusive bounds for switch comparisons
+            const ready = (switches[0] === m.reqT1) && (switches[1] === m.reqT2) && (v >= m.reqVMin && v <= m.reqVMax);
+            
+            btn.className = ready ? 'action-button ready' : 'action-button';
+            btn.innerHTML = "MASTER<br>ARM";
+            readout.innerText = ready ? "MASTER ARMED" : "CALIBRATING...";
+            readout.style.color = ready ? "#f00" : "#ffcc00";
+        } else if (gameState === "LAUNCHED") {
+            btn.className = 'action-button reset';
+            btn.innerHTML = "NEXT<br>ORDER";
+            readout.innerText = "STANDBY FOR ORDERS";
+            readout.style.color = "#555";
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    function toggleSwitch(n) {
+        if (gameState === "LAUNCHED") return;
+        
+        initAudio();
+        playBeep(200, 0.05, 'square', 0.1);
+        
+        switches[n-1] = !switches[n-1];
+        document.getElementById(`toggle${n}`).classList.toggle('active');
+        document.getElementById(`led${n}`).style.background = switches[n-1] ? '#0f0' : '#300';
+    }
+
+    function handleActionBtn() {
+        if (gameState === "ACTIVE" && document.getElementById('master-arm').classList.contains('ready')) {
+            executeLaunch();
+        } else if (gameState === "LAUNCHED") {
+            loadNextMission();
+        }
+    }
+
+    function executeLaunch() {
+        gameState = "LAUNCHED";
+        
+        // Cut engine noise on launch
+        if (engineGain) engineGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+
+        document.getElementById('cockpit').style.animation = "shake 0.3s infinite";
+        playBeep(60, 2, 'sawtooth', 0.4);
+        printLog("PAYLOAD DEPLOYED. TRACKING VELOCITY...");
+
+        setTimeout(() => {
+            document.getElementById('cockpit').style.animation = "none";
+            
+            // Clean up explosion animation
+            if (animFrame) cancelAnimationFrame(animFrame);
+            
+            triggerExplosion();
+            playBeep(40, 1, 'square', 0.6);
+            printLog("IMPACT CONFIRMED. TARGET NEUTRALIZED. AWAITING RESET.");
+        }, 2500);
+    }
+
+    function loadNextMission() {
+        // Clean up previous animation
+        if (animFrame) cancelAnimationFrame(animFrame);
+        
+        switches = [false, false];
+        document.getElementById('toggle1').classList.remove('active');
+        document.getElementById('toggle2').classList.remove('active');
+        document.getElementById('led1').style.background = '#300';
+        document.getElementById('led2').style.background = '#300';
+        document.getElementById('powerSlider').value = 0;
+        
+        currentMissionIdx = (currentMissionIdx + 1) % missions.length;
+        gameState = "ACTIVE";
+        
+        updateMissionHint();
+        printLog(`INCOMING COMM: ${missions[currentMissionIdx].text}`);
+    }
+
+    document.body.addEventListener('click', () => {
+        if (gameState === "STANDBY") {
+            initAudio();
+            gameState = "ACTIVE";
+            
+            // Update hint for first mission
+            updateMissionHint();
+            
+            printLog(`INCOMING COMM: ${missions[currentMissionIdx].text}`);
+        }
+    }, { once: true }); 
+
+    drawStatic();
+    loop();
+</script>
+</body>
+</html>
