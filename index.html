@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ATLAS TERMINAL: TACTICAL SIMULATOR</title>
+    <title>ATLAS TERMINAL: TACTICAL SIMULATOR v3.0</title>
     <style>
         :root {
             --bezel: #2c2c2c;
             --screen-bg: #0a0c0a;
             --text-green: #00ff41;
+            --warning-yellow: #ffff33;
             --warning-red: #ff3300;
             --metal-shine: linear-gradient(145deg, #444, #222);
         }
@@ -72,6 +73,20 @@
             cursor: help;
         }
 
+        .gauge-label {
+            font-size: 11px;
+            color: #888;
+            font-weight: bold;
+            margin-top: 5px;
+            text-transform: uppercase;
+        }
+        
+        .gauge-value {
+            font-size: 14px;
+            color: var(--text-green);
+            margin-top: 2px;
+        }
+
         /* --- MAIN MONITOR & CRT --- */
         #monitor {
             grid-column: 2;
@@ -100,6 +115,13 @@
             line-height: 1.5;
             overflow: hidden;
             text-shadow: 0 0 5px var(--text-green);
+        }
+        
+        .mission-info {
+            background: rgba(0,255,65,0.1);
+            padding: 8px;
+            margin-bottom: 10px;
+            border-left: 3px solid var(--text-green);
         }
 
         #scanline {
@@ -143,6 +165,12 @@
             border-color: var(--text-green);
             box-shadow: 0 0 20px rgba(0,255,65,0.4);
         }
+        
+        .toggle-btn.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            filter: grayscale(100%);
+        }
 
         .led {
             width: 12px;
@@ -152,6 +180,9 @@
             margin-top: 10px;
             border: 1px solid #000;
         }
+        
+        .led.warning { background: var(--warning-yellow); box-shadow: 0 0 8px var(--warning-yellow); }
+        .led.danger { background: var(--warning-red); box-shadow: 0 0 12px var(--warning-red); }
 
         input[type=range] {
             appearance: slider-vertical;
@@ -193,6 +224,7 @@
         }
 
         .label { font-size: 11px; color: #888; font-weight: bold; margin-top: 8px; text-transform: uppercase; }
+        
         .hint-text {
             position: absolute;
             bottom: 5px;
@@ -200,6 +232,13 @@
             font-size: 10px;
             color: #666;
             max-width: 300px;
+        }
+
+        /* Temperature warning styling */
+        @keyframes heat-pulse {
+            0% { box-shadow: inset 0 0 5px var(--warning-red); }
+            50% { box-shadow: inset 0 0 20px var(--warning-red); }
+            100% { box-shadow: inset 0 0 5px var(--warning-red); }
         }
 
         @keyframes shake {
@@ -211,39 +250,57 @@
             90% { transform: translate(-2px, -2px) rotate(0deg); }
             100% { transform: translate(1px, 2px) rotate(0deg); }
         }
+
+        .heat-warning {
+            animation: heat-pulse 0.5s infinite;
+            border-color: var(--warning-yellow);
+        }
+        
+        .critical-heat {
+            animation: heat-pulse 0.2s infinite;
+            border-color: var(--warning-red);
+        }
     </style>
 </head>
 <body>
 
 <div id="cockpit">
-    <div class="atlas-brand">ATLAS PROTOCOL SYSTEM v2.1</div>
+    <div class="atlas-brand">ATLAS PROTOCOL SYSTEM v3.0</div>
     
     <div class="gauge-cluster">
         <div class="gauge-box">
-            <canvas id="pressureGauge" class="gauge-canvas" title="Pressure (PSI): Measures physical force exerted by gas. Must match target voltage window."></canvas>
-            <div class="label" id="lbl-psi">Reactor PSI</div>
+            <canvas id="pressureGauge" class="gauge-canvas"></canvas>
+            <div class="gauge-label">Reactor PSI</div>
+            <div class="gauge-value" id="val-psi">0</div>
         </div>
         <div class="gauge-box">
-            <canvas id="tempGauge" class="gauge-canvas" title="Thermal Core: Regulated by FUEL injection toggle."></canvas>
-            <div class="label">Thermal Core</div>
+            <canvas id="tempGauge" class="gauge-canvas"></canvas>
+            <div class="gauge-label">Thermal Core</div>
+            <div class="gauge-value" id="val-temp">25°C</div>
         </div>
     </div>
 
     <div id="monitor">
+        <div class="mission-info" id="current-mission-display">
+            MISSION: SYSTEM STABILIZATION<br>
+            STATUS: INITIALIZE ALL SYSTEMS
+        </div>
         <canvas id="impactScreen"></canvas>
         <div id="teletype" aria-live="polite">>> SYSTEM OFFLINE.<br>>> CLICK CONSOLE TO ENGAGE ATLAS PROTOCOL.</div>
-        <div class="hint-text" id="mission-hint">TIP: Press the FUEL and LOX switches, then adjust Voltage to 75-85</div>
+        <div class="hint-text" id="mission-hint">TIP: Press FUEL and LOX switches, then adjust Voltage to 75-85</div>
         <div id="scanline"></div>
     </div>
 
     <div class="gauge-cluster">
         <div class="gauge-box">
-            <canvas id="altGauge" class="gauge-canvas" title="Altitude: Atmospheric density coefficient."></canvas>
-            <div class="label">Target Alt</div>
+            <canvas id="altGauge" class="gauge-canvas"></canvas>
+            <div class="gauge-label">Target Alt</div>
+            <div class="gauge-value" id="val-alt">0%</div>
         </div>
         <div class="gauge-box">
-            <canvas id="freqGauge" class="gauge-canvas" title="Frequency: Comm link stabilized via LOX input."></canvas>
-            <div class="label">Comm Link</div>
+            <canvas id="freqGauge" class="gauge-canvas"></canvas>
+            <div class="gauge-label">Comm Link</div>
+            <div class="gauge-value" id="val-freq">0%</div>
         </div>
     </div>
 
@@ -273,6 +330,25 @@
 </div>
 
 <script>
+    // --- GAME STATE ---
+    const gameState = {
+        active: false,
+        launched: false,
+        switches: [false, false],
+        currentMissionIdx: 0,
+        teletypeInterval: null,
+        missionTimer: 0,
+        stabilityDuration: 3000, // ms to maintain stability
+        lastAudioUpdate: 0,
+    };
+
+    const systems = {
+        pressure: { value: 0, drift: 0 },
+        temp: { value: 25, heatRate: 0.15, coolRate: 0.08, maxSafe: 75, critical: 95 },
+        alt: { value: 0 },
+        freq: { value: 10 }
+    };
+
     // --- DPI SCALING UTILITY ---
     function setupCanvas(id) {
         const canvas = document.getElementById(id);
@@ -333,12 +409,11 @@
     const impactDisplay = setupImpactScreen();
     const ictx = impactDisplay.ctx;
 
-    // --- AUDIO CONTEXT MANAGEMENT & ENGINE LOOP ---
+    // --- AUDIO CONTEXT MANAGEMENT ---
     let audioCtx = null;
     let engineOsc = null;
     let engineGain = null;
-    let lastAudioUpdate = 0;
-    const AUDIO_UPDATE_INTERVAL = 100; // ms between updates
+    const AUDIO_UPDATE_INTERVAL = 150; // ms between updates
 
     function initAudio() {
         if (!audioCtx) {
@@ -390,19 +465,19 @@
     // --- DYNAMIC SLIDER -> ENGINE AUDIO MAPPING WITH DEBOUNCING ---
     document.getElementById('powerSlider').addEventListener('input', (e) => {
         const now = Date.now();
-        if (now - lastAudioUpdate < AUDIO_UPDATE_INTERVAL) return;
+        if (now - gameState.lastAudioUpdate < AUDIO_UPDATE_INTERVAL) return;
         
         initAudio();
         const val = parseFloat(e.target.value);
         
-        if (!engineGain || !engineOsc || gameState === "LAUNCHED") return;
+        if (!engineGain || !engineOsc || gameState.launched) return;
         
         // Map voltage 0-100 to volume 0.0-0.3
         engineGain.gain.setTargetAtTime(val * 0.003, audioCtx.currentTime, 0.1);
         // Map voltage 0-100 to pitch 50Hz-150Hz
         engineOsc.frequency.setTargetAtTime(50 + (val * 1.0), audioCtx.currentTime, 0.1);
         
-        lastAudioUpdate = now;
+        gameState.lastAudioUpdate = now;
     });
 
     // --- CRT PARTICLES & CLEANUP ---
@@ -487,8 +562,8 @@
         requestAnimationFrame(drawStatic);
     }
 
-    // --- GAUGE RENDERER ---
-    function drawGauge(ctxObj, value, color = "#00ff41") {
+    // --- ENHANCED GAUGE RENDERER WITH TICK MARKS ---
+    function drawGauge(ctxObj, value, color = "#00ff41", min = 0, max = 100) {
         try {
             const ctx = ctxObj.ctx;
             const w = ctxObj.w;
@@ -506,9 +581,44 @@
             ctx.arc(cx, cy, r, 0.75 * Math.PI, 2.25 * Math.PI);
             ctx.stroke();
 
-            // Calculate needle angle
-            const angle = 0.75 * Math.PI + (value / 100) * 1.5 * Math.PI;
+            // Calculate needle angle (apply drift)
+            const normalizedValue = Math.max(min, Math.min(max, value + ctxObj.drift || 0));
+            const angle = 0.75 * Math.PI + ((normalizedValue - min) / (max - min)) * 1.5 * Math.PI;
             
+            // Draw tick marks
+            for (let i = 0; i <= max; i += 10) {
+                const tickAngle = 0.75 * Math.PI + (i / (max - min)) * 1.5 * Math.PI;
+                const isMajor = i % 25 === 0;
+                const innerRadius = r * (isMajor ? 0.85 : 0.92);
+                const outerRadius = r * (isMajor ? 0.97 : 0.95);
+                
+                ctx.strokeStyle = "#666";
+                ctx.lineWidth = isMajor ? 2 : 1;
+                
+                const startX = cx + Math.cos(tickAngle) * innerRadius;
+                const startY = cy + Math.sin(tickAngle) * innerRadius;
+                const endX = cx + Math.cos(tickAngle) * outerRadius;
+                const endY = cy + Math.sin(tickAngle) * outerRadius;
+                
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+                
+                // Add numbers for major ticks
+                if (isMajor) {
+                    const textRadius = r * 0.78;
+                    const textX = cx + Math.cos(tickAngle) * textRadius;
+                    const textY = cy + Math.sin(tickAngle) * textRadius;
+                    
+                    ctx.fillStyle = "#fff";
+                    ctx.font = "10px 'Courier New'";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(i, textX, textY);
+                }
+            }
+
             // Draw needle
             ctx.strokeStyle = color;
             ctx.lineWidth = 3;
@@ -519,6 +629,12 @@
             ctx.lineTo(cx + Math.cos(angle) * (r * 0.9), cy + Math.sin(angle) * (r * 0.9));
             ctx.stroke();
             
+            // Draw center dot
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 4, 0, Math.PI*2);
+            ctx.fill();
+            
             // Reset shadow
             ctx.shadowBlur = 0;
         } catch (e) {
@@ -528,113 +644,287 @@
 
     // --- MISSIONS & GAME LOGIC ---
     const missions = [
-        { text: "MISSION 1: PRIMARY DEPOT. REQ: 75-85 VOLTS. PRIME ALL FUEL/LOX SYSTEMS.", reqVMin: 75, reqVMax: 85, reqT1: true, reqT2: true },
-        { text: "MISSION 2: STEALTH INSERTION. REQ: 30-40 VOLTS. LOX ONLY. ABORT FUEL.", reqVMin: 30, reqVMax: 40, reqT1: false, reqT2: true },
-        { text: "MISSION 3: MAXIMUM OVERRIDE. REQ: 90-100 VOLTS. FUEL ONLY. DANGER CLOSE.", reqVMin: 90, reqVMax: 100, reqT1: true, reqT2: false }
+        { 
+            name: "MISSION 1: SYSTEM STABILIZATION",
+            description: "Get all systems within green zones and maintain stability for 3 seconds.",
+            requirements: { 
+                pressure: [70, 90], 
+                temp: [25, 60], 
+                freq: [80, 100] 
+            },
+            duration: 3, // seconds to maintain stability
+            hint: "TIP: Press FUEL & LOX switches, then adjust Voltage to 75-85"
+        },
+        { 
+            name: "MISSION 2: STEALTH INSERTION",
+            description: "Low power mode. Maintain precise settings for 4 seconds.",
+            requirements: { 
+                pressure: [30, 45], 
+                temp: [25, 50], 
+                freq: [70, 90] 
+            },
+            duration: 4,
+            hint: "TIP: Press ONLY LOX switch, then adjust Voltage to 35-40"
+        },
+        { 
+            name: "MISSION 3: MAXIMUM OVERRIDE",
+            description: "High power surge. Manage heat carefully for 5 seconds.",
+            requirements: { 
+                pressure: [90, 100], 
+                temp: [25, 65], 
+                freq: [85, 100] 
+            },
+            duration: 5,
+            hint: "TIP: Press ONLY FUEL switch, then adjust Voltage to 95-100. Watch your temperature!"
+        }
     ];
-    
-    let currentMissionIdx = 0;
-    let switches = [false, false];
-    let gameState = "STANDBY"; 
-    let teletypeInterval = null; 
+
+    let missionTimer = 0;
+    let stabilityTime = 3000; // ms to maintain stability
+    let heatWarningActive = false;
 
     function printLog(text) {
         const el = document.getElementById('teletype');
         if (!el) return;
         
         el.innerHTML = "";
-        if (teletypeInterval) clearInterval(teletypeInterval);
+        if (gameState.teletypeInterval) clearInterval(gameState.teletypeInterval);
         
         let i = 0;
         playMorse();
-        teletypeInterval = setInterval(() => {
+        gameState.teletypeInterval = setInterval(() => {
             el.innerHTML += text[i];
             playBeep(400, 0.01, 'sawtooth', 0.02);
             i++;
-            if(i >= text.length) clearInterval(teletypeInterval);
+            if(i >= text.length) clearInterval(gameState.teletypeInterval);
         }, 40);
     }
 
-    function updateMissionHint() {
+    function updateMissionDisplay() {
+        const m = missions[gameState.currentMissionIdx];
+        
+        // Update mission info box
+        document.getElementById('current-mission-display').innerHTML = `
+            <strong>${m.name}</strong><br>
+            ${m.description}<br>
+            <span style="color:var(--warning-yellow)">Maintain stability for ${m.duration} seconds</span>
+        `;
+        
+        // Update hint text
         const hintEl = document.getElementById('mission-hint');
-        if (!hintEl || gameState !== "ACTIVE") return;
+        if (hintEl) {
+            hintEl.textContent = m.hint;
+        }
+    }
+
+    function updateSystemStatus() {
+        const statusReadout = document.getElementById('status-readout');
+        const masterBtn = document.getElementById('master-arm');
         
-        const m = missions[currentMissionIdx];
-        let hintText = "";
-        
-        if (m.reqT1 && m.reqT2) {
-            hintText = `TIP: Press FUEL & LOX switches, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
-        } else if (m.reqT1) {
-            hintText = `TIP: Press ONLY the FUEL switch, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
-        } else if (m.reqT2) {
-            hintText = `TIP: Press ONLY the LOX switch, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
+        // Check system stability
+        const m = missions[gameState.currentMissionIdx];
+        const v = parseInt(document.getElementById('powerSlider').value) || 0;
+        const temp = systems.temp.value;
+        const freq = systems.freq.value + (gauges.freq.drift || 0);
+        const pressure = systems.pressure.value + (gauges.pressure.drift || 0);
+
+        // Check if within acceptable ranges
+        const pressureOk = pressure >= m.requirements.pressure[0] && pressure <= m.requirements.pressure[1];
+        const tempOk = temp >= m.requirements.temp[0] && temp <= m.requirements.temp[1];
+        const freqOk = freq >= m.requirements.freq[0] && freq <= m.requirements.freq[1];
+
+        if (gameState.launched) {
+            masterBtn.className = 'action-button reset';
+            masterBtn.innerHTML = "NEXT<br>ORDER";
+            statusReadout.innerText = "STANDBY FOR ORDERS";
+            statusReadout.style.color = "#555";
+        } else if (!gameState.active) {
+            masterBtn.className = 'action-button';
+            masterBtn.style.cursor = 'not-allowed';
+            masterBtn.innerHTML = "MASTER<br>ARM";
+            statusReadout.innerText = "SYSTEM OFFLINE";
+            statusReadout.style.color = "#555";
         } else {
-            hintText = `TIP: Leave both switches OFF, then adjust Voltage to ${m.reqVMin}-${m.reqVMax}`;
+            // Active mission mode
+            if (pressureOk && tempOk && freqOk) {
+                // System is stable - update timer
+                statusReadout.innerText = "STABILIZED - HOLD...";
+                statusReadout.style.color = "#0f0";
+                
+                // Update master arm button to show it's ready
+                masterBtn.className = 'action-button ready';
+            } else {
+                statusReadout.innerText = "UNSTABLE - ADJUST...";
+                statusReadout.style.color = "#ffcc00";
+                
+                // Reset master arm if system is unstable
+                masterBtn.className = 'action-button';
+                masterBtn.style.cursor = 'not-allowed';
+            }
+        }
+
+        return {
+            pressureOk,
+            tempOk,
+            freqOk,
+            inStableRange: pressureOk && tempOk && freqOk
+        };
+    }
+
+    function updateTemperature() {
+        const fuelActive = gameState.switches[0];
+        
+        if (fuelActive) {
+            // FUEL generates heat
+            systems.temp.value += systems.temp.heatRate * 2;
+            
+            // Check temperature warnings
+            if (systems.temp.value > systems.temp.critical) {
+                systems.temp.value = systems.temp.critical; // Cap at critical
+                playBeep(150, 0.3, 'square', 0.1); // Critical alarm
+                
+                // Show critical warning on temp gauge
+                document.getElementById('tempGauge').classList.add('critical-heat');
+                
+                // Disable FUEL toggle if critical
+                document.getElementById('toggle1').classList.add('disabled');
+            } else if (systems.temp.value > systems.temp.maxSafe) {
+                playBeep(400, 0.2, 'sawtooth', 0.05); // Warning beep
+                
+                // Show warning on temp gauge
+                document.getElementById('tempGauge').classList.add('heat-warning');
+                
+                // Update LED to warning color
+                document.getElementById('led1').classList.add('warning');
+            } else {
+                document.getElementById('tempGauge').classList.remove('critical-heat', 'heat-warning');
+                document.getElementById('led1').classList.remove('warning', 'danger');
+                document.getElementById('toggle1').classList.remove('disabled');
+            }
+        } else if (systems.temp.value > 25) {
+            // Natural cooling when FUEL is off
+            systems.temp.value -= systems.temp.coolRate;
+            if (systems.temp.value < 25) systems.temp.value = 25;
+            
+            document.getElementById('tempGauge').classList.remove('critical-heat', 'heat-warning');
+            document.getElementById('led1').classList.remove('warning', 'danger');
+        }
+    }
+
+    function updateGaugeDrift() {
+        // Small random drift for realism
+        const driftChance = 0.05; // 5% chance per frame
+        
+        if (Math.random() < driftChance) {
+            gauges.pressure.drift = (Math.random() - 0.5) * 8;
+        }
+        if (Math.random() < driftChance) {
+            gauges.freq.drift = (Math.random() - 0.5) * 12;
         }
         
-        hintEl.textContent = hintText;
+        // Slowly reduce drift
+        if (gauges.pressure.drift && Math.abs(gauges.pressure.drift) > 1) {
+            gauges.pressure.drift *= 0.95;
+        } else if (Math.random() < 0.1) {
+            gauges.pressure.drift = null;
+        }
+        
+        if (gauges.freq.drift && Math.abs(gauges.freq.drift) > 1) {
+            gauges.freq.drift *= 0.95;
+        } else if (Math.random() < 0.1) {
+            gauges.freq.drift = null;
+        }
+    }
+
+    function updatePressureAndFreq() {
+        const v = parseInt(document.getElementById('powerSlider').value) || 0;
+        
+        // Voltage affects pressure directly
+        systems.pressure.value = v + (gauges.pressure.drift || 0);
+        
+        // LOX stabilizes frequency
+        if (gameState.switches[1]) {
+            // LOX helps stabilize frequency around 85-95%
+            systems.freq.value = 85 + Math.random() * 10;
+        } else {
+            // Without LOX, frequency drifts lower
+            systems.freq.value = 10 + Math.random() * 20;
+        }
+        
+        systems.freq.value += (gauges.freq.drift || 0);
     }
 
     function loop() {
-        const v = parseInt(document.getElementById('powerSlider').value);
-        if (isNaN(v)) return; // Skip if slider not ready
+        if (!gameState.active) return;
+
+        // Update temperature based on FUEL switch
+        updateTemperature();
         
-        const m = missions[currentMissionIdx];
+        // Update drift for realistic gauge behavior
+        updateGaugeDrift();
+        
+        // Update pressure and frequency
+        updatePressureAndFreq();
+
+        // Draw gauges with current values and color coding
+        const v = systems.pressure.value;
+        const temp = systems.temp.value;
+        const freq = systems.freq.value;
 
         let psiColor = "#0f0";
-        if (gameState === "ACTIVE") {
-            // FIXED: Use inclusive bounds for proper validation
-            const inRange = v >= m.reqVMin && v <= m.reqVMax;
-            if (!inRange) psiColor = "#f00";
-        }
+        if (v < 15 || v > 85) psiColor = "#f00"; // Red zones
+        else if (v < 40 || v > 70) psiColor = "#ffcc00"; // Yellow zones
         
+        let tempColor = "#0f0";
+        if (temp > systems.temp.critical) tempColor = "#f00";
+        else if (temp > systems.temp.maxSafe) tempColor = "#ffcc00";
+
         drawGauge(gauges.pressure, v, psiColor);
-        drawGauge(gauges.temp, switches[0] ? 70 : 15);
-        drawGauge(gauges.alt, 55 + (currentMissionIdx * 10)); 
-        drawGauge(gauges.freq, switches[1] ? 85 : 10);
+        drawGauge(gauges.temp, temp, tempColor, 0, 120);
+        drawGauge(gauges.alt, 55 + (gameState.currentMissionIdx * 10));
+        drawGauge(gauges.freq, freq, "#0f0");
 
-        const btn = document.getElementById('master-arm');
-        const readout = document.getElementById('status-readout');
+        // Update gauge value displays
+        document.getElementById('val-psi').innerText = Math.round(v) + " PSI";
+        document.getElementById('val-temp').innerText = Math.round(temp) + "°C";
+        document.getElementById('val-freq').innerText = Math.round(freq) + "%";
 
-        if (gameState === "ACTIVE") {
-            // FIXED: Use inclusive bounds for switch comparisons
-            const ready = (switches[0] === m.reqT1) && (switches[1] === m.reqT2) && (v >= m.reqVMin && v <= m.reqVMax);
-            
-            btn.className = ready ? 'action-button ready' : 'action-button';
-            btn.innerHTML = "MASTER<br>ARM";
-            readout.innerText = ready ? "MASTER ARMED" : "CALIBRATING...";
-            readout.style.color = ready ? "#f00" : "#ffcc00";
-        } else if (gameState === "LAUNCHED") {
-            btn.className = 'action-button reset';
-            btn.innerHTML = "NEXT<br>ORDER";
-            readout.innerText = "STANDBY FOR ORDERS";
-            readout.style.color = "#555";
-        }
+        // Check system status and update UI
+        const status = updateSystemStatus();
 
         requestAnimationFrame(loop);
     }
 
     function toggleSwitch(n) {
-        if (gameState === "LAUNCHED") return;
+        if (gameState.launched || systems.temp.value > systems.temp.critical) return;
         
         initAudio();
         playBeep(200, 0.05, 'square', 0.1);
         
-        switches[n-1] = !switches[n-1];
+        gameState.switches[n-1] = !gameState.switches[n-1];
         document.getElementById(`toggle${n}`).classList.toggle('active');
-        document.getElementById(`led${n}`).style.background = switches[n-1] ? '#0f0' : '#300';
+        document.getElementById(`led${n}`).style.background = gameState.switches[n-1] ? '#0f0' : '#300';
     }
 
     function handleActionBtn() {
-        if (gameState === "ACTIVE" && document.getElementById('master-arm').classList.contains('ready')) {
-            executeLaunch();
-        } else if (gameState === "LAUNCHED") {
+        if (gameState.active && !gameState.launched) {
+            const masterBtn = document.getElementById('master-arm');
+            
+            // Check if system is stable and ready to launch
+            const status = updateSystemStatus();
+            
+            if (status.inStableRange) {
+                executeLaunch();
+            } else {
+                playBeep(100, 0.3, 'sawtooth', 0.2); // Error beep - can't launch yet
+            }
+        } else if (gameState.launched) {
             loadNextMission();
         }
     }
 
     function executeLaunch() {
-        gameState = "LAUNCHED";
+        gameState.launched = true;
         
         // Cut engine noise on launch
         if (engineGain) engineGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
@@ -651,37 +941,51 @@
             
             triggerExplosion();
             playBeep(40, 1, 'square', 0.6);
-            printLog("IMPACT CONFIRMED. TARGET NEUTRALIZED. AWAITING RESET.");
+            
+            // Success message with feedback based on accuracy
+            const m = missions[gameState.currentMissionIdx];
+            printLog("IMPACT CONFIRMED. TARGET NEUTRALIZED.");
         }, 2500);
+
+        setTimeout(() => {
+            loadNextMission();
+        }, 4000);
     }
 
     function loadNextMission() {
         // Clean up previous animation
         if (animFrame) cancelAnimationFrame(animFrame);
         
-        switches = [false, false];
-        document.getElementById('toggle1').classList.remove('active');
+        // Reset switches
+        gameState.switches = [false, false];
+        document.getElementById('toggle1').classList.remove('active', 'disabled');
         document.getElementById('toggle2').classList.remove('active');
         document.getElementById('led1').style.background = '#300';
+        document.getElementById('led1').classList.remove('warning', 'danger');
         document.getElementById('led2').style.background = '#300';
         document.getElementById('powerSlider').value = 0;
         
-        currentMissionIdx = (currentMissionIdx + 1) % missions.length;
-        gameState = "ACTIVE";
+        // Reset temperature
+        systems.temp.value = 25;
         
-        updateMissionHint();
-        printLog(`INCOMING COMM: ${missions[currentMissionIdx].text}`);
+        // Move to next mission
+        gameState.currentMissionIdx = (gameState.currentMissionIdx + 1) % missions.length;
+        gameState.launched = false;
+        
+        updateMissionDisplay();
+        printLog(`INCOMING COMM: ${missions[gameState.currentMissionIdx].name}`);
     }
 
     document.body.addEventListener('click', () => {
-        if (gameState === "STANDBY") {
+        if (!gameState.active && !gameState.launched) {
             initAudio();
-            gameState = "ACTIVE";
+            gameState.active = true;
             
             // Update hint for first mission
-            updateMissionHint();
+            updateMissionDisplay();
             
-            printLog(`INCOMING COMM: ${missions[currentMissionIdx].text}`);
+            printLog(`INCOMING COMM: ${missions[gameState.currentMissionIdx].name}`);
+            printLog(missions[gameState.currentMissionIdx].description);
         }
     }, { once: true }); 
 
